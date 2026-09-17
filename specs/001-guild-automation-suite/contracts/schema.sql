@@ -5,6 +5,7 @@
 -- account the services run as (ADR-0004, and the constitution's privilege-isolation rule).
 -- This file is the contract; the authoritative migrations live in crates/gaea-store/migrations/.
 
+CREATE TYPE feature_kind          AS ENUM ('greetings', 'schedules', 'voice', 'twitch', 'youtube');
 CREATE TYPE greeting_presentation AS ENUM ('plain', 'card');
 CREATE TYPE recurrence_kind       AS ENUM ('once', 'daily', 'weekly');
 CREATE TYPE schedule_state        AS ENUM ('active', 'suspended');
@@ -31,9 +32,26 @@ CREATE TABLE guild (
 -- while the bot was offline is performed on the next start.
 CREATE INDEX guild_purge_due ON guild (purge_after) WHERE purge_after IS NOT NULL;
 
+-- FR-006: every feature is independently enableable per guild, and disabling retains
+-- the configuration. One row per (guild, feature) rather than an `enabled` column on each
+-- settings table, so there is ONE place a feature's state lives and adding a feature needs
+-- no migration on an existing table. This is what `/gaea disable <feature>` writes to
+-- (FR-042 of spec 002) — without it, three of the five features have nowhere to record
+-- being disabled.
+CREATE TABLE guild_feature_state (
+    guild_id      BIGINT       NOT NULL REFERENCES guild(id) ON DELETE CASCADE,
+    feature       feature_kind NOT NULL,
+    enabled       BOOLEAN      NOT NULL DEFAULT false,
+    -- Who last changed it and why, so a feature found switched off during an incident is
+    -- explicable rather than a mystery (FR-044 of spec 002).
+    changed_by    BIGINT,
+    changed_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (guild_id, feature)
+);
+
 CREATE TABLE welcome_setting (
     guild_id      BIGINT PRIMARY KEY REFERENCES guild(id) ON DELETE CASCADE,
-    enabled       BOOLEAN               NOT NULL DEFAULT false,
+    -- Enabled state lives in guild_feature_state, not here: one source of truth.
     channel_id    BIGINT                NOT NULL,
     template      TEXT                  NOT NULL,
     presentation  greeting_presentation NOT NULL DEFAULT 'plain',
@@ -45,7 +63,7 @@ CREATE TABLE welcome_setting (
 
 CREATE TABLE temporary_voice_setting (
     guild_id              BIGINT PRIMARY KEY REFERENCES guild(id) ON DELETE CASCADE,
-    enabled               BOOLEAN NOT NULL DEFAULT false,
+    -- Enabled state lives in guild_feature_state, not here.
     hub_channel_id        BIGINT  NOT NULL,
     category_id           BIGINT,
     name_pattern          TEXT    NOT NULL,
@@ -199,5 +217,7 @@ CREATE UNIQUE INDEX delivered_once
 -- memory, so a restart cannot reset a guild's consumption (FR-010, FR-015, FR-019).
 CREATE INDEX delivery_window ON delivery_record (guild_id, kind, occurred_at DESC);
 
--- Retention: 90 days by default, operator-configurable (FR-049 of spec 002).
+-- Retention: 90 days by default, operator-configurable. The policy and the sweep that
+-- enforces it belong to spec 002 (FR-049, FR-051); this feature owns the table and the
+-- index the sweep uses. Rows are also removed with the guild on purge (FR-009).
 CREATE INDEX delivery_retention ON delivery_record (occurred_at);

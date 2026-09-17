@@ -39,14 +39,37 @@ write time, not at delivery time.
 `dormant → active` on re-add within the window (clears both, announces restoration per FR-009b);
 `dormant → deleted` when `purge_after` passes (row deleted, cascading to everything below).
 
+### guild_feature_state
+
+One row per (guild, feature). The single place a feature's enabled state lives.
+
+| Field | Type | Notes |
+|---|---|---|
+| `guild_id` | BIGINT FK → guild | Part of the composite primary key |
+| `feature` | ENUM('greetings','schedules','voice','twitch','youtube') | Part of the composite primary key |
+| `enabled` | BOOLEAN NOT NULL | Disabling retains all configuration (FR-006) |
+| `changed_by` | BIGINT NULL | Who last changed it |
+| `changed_at` | TIMESTAMPTZ NOT NULL | When |
+
+**Why a table rather than an `enabled` column on each settings table**: FR-006 requires all five
+features to be independently disableable, and `/gaea disable <feature>` (FR-042 of spec 002) accepts
+all five. Only greetings and temporary voice have a settings table of their own — schedules, Twitch
+and YouTube are collections of rows, with no single row to carry a flag. A per-feature column would
+therefore leave three of the five features with nowhere to record being disabled, which is precisely
+the state the emergency disable command exists to reach. One table also means adding a sixth feature
+needs no migration on an existing table.
+
+`changed_by` and `changed_at` exist so that a feature found switched off during an incident is
+explicable rather than a mystery (FR-044 of spec 002).
+
 ### welcome_setting
 
-One row per guild. Holds FR-011 through FR-015 and FR-012a.
+One row per guild. Holds FR-011 through FR-015 and FR-012a. Enabled state lives in
+`guild_feature_state`, not here.
 
 | Field | Type | Notes |
 |---|---|---|
 | `guild_id` | BIGINT PK FK → guild | |
-| `enabled` | BOOLEAN NOT NULL | Disabling retains the template (FR-006) |
 | `channel_id` | BIGINT NOT NULL | Destination |
 | `template` | TEXT NOT NULL | Validated at write time (FR-005) |
 | `presentation` | ENUM('plain','card') NOT NULL | Exactly two (FR-012a) |
@@ -58,12 +81,11 @@ contain an image address (FR-012b) — enforced by validation, since the schema 
 
 ### temporary_voice_setting
 
-One row per guild. The hub-join model from FR-016.
+One row per guild. The hub-join model from FR-016. Enabled state lives in `guild_feature_state`.
 
 | Field | Type | Notes |
 |---|---|---|
 | `guild_id` | BIGINT PK FK → guild | |
-| `enabled` | BOOLEAN NOT NULL | |
 | `hub_channel_id` | BIGINT NOT NULL | Joining this creates a channel (FR-016) |
 | `category_id` | BIGINT NULL | Where created channels are placed |
 | `name_pattern` | TEXT NOT NULL | Sanitized to 100 chars and the permitted set (FR-022) |
@@ -179,10 +201,19 @@ Append-only. Serves both FR-003's audit obligation and the exactly-once guarante
 "exactly once" a database constraint rather than an application hope, across greetings, scheduled
 instants, broadcasts and videos alike.
 
-**Retention**: 90 days by default, operator-configurable (FR-049 of 002), and deleted with the guild
-on purge (FR-051 of 002).
+**Retention**: 90 days by default, operator-configurable. The policy and the sweep enforcing it
+belong to spec 002 (FR-049, FR-051); this feature owns the table and the index the sweep uses. Rows
+are also removed with the guild on purge (FR-009).
+
+**Configuration changes are audited here too.** `kind = 'config_change'` with `actor_id` set is what
+satisfies FR-003 and SC-012's "100% attributable" — every write path, including the operator CLI,
+goes through one audit writer rather than each remembering to record.
 
 ## Cross-cutting invariants
+
+**Feature enablement (FR-006)**. A feature acts only when `guild_feature_state` says it is enabled
+for that guild. Combined with the dormancy filter below, the repository methods feeding a feature
+runner answer both questions at once, so neither can be forgotten independently.
 
 **Dormancy (FR-009a)**. A dormant guild must perform no automated action. This is enforced by making
 every repository method that feeds a feature runner filter `removed_at IS NULL`, so that omitting

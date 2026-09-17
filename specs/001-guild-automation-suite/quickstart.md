@@ -164,9 +164,11 @@ SC-005a's target for this version is 25 guilds holding at most 100 distinct Twit
 unused: a full Twitch reconciliation is a single `Get Streams` call costing one point of an
 800-point minute bucket, and the YouTube Data API is not touched at all.
 
-No load modelling is required for V1 — the ceilings were chosen precisely so that none is. What
-**is** required before those ceilings are raised is confirming Twitch's application-wide total-cost
-ceiling, which V1 deliberately does not depend on. See [research.md](research.md).
+No load *modelling* is required for V1 — the ceilings were chosen precisely so that none is. A smoke
+check at the target size is still run, so SC-005a and SC-009 are verified rather than merely
+asserted; see the scale task in [tasks.md](tasks.md). What **is** required before those ceilings are
+raised is confirming Twitch's application-wide total-cost ceiling, which V1 deliberately does not
+depend on. See [research.md](research.md).
 
 The behavioural tests above are a different matter and are not optional at any scale. A revoked
 subscription and a lapsed lease fail identically with 25 guilds and with 1,000, and neither
