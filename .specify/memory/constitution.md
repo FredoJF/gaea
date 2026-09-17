@@ -131,7 +131,7 @@ sentiment are NOT admissible justifications.
   comparable engineering merit the one on a >= 1.0 line MUST be chosen.
 - A pre-1.0 dependency MAY be adopted only when every one of the following holds, and the ADR
   records each: (a) no >= 1.0 alternative of comparable engineering merit exists; (b) the upstream
-  repository is not archived or deprecated and shows commit activity within the last 90 days;
+  repository is not archived or deprecated and shows commit activity within the last 180 days;
   (c) the license permits forking; (d) the dependency is isolated behind an internal boundary owned
   by this project, such that no type it defines appears in domain logic, and it can be replaced or
   forked without touching that logic; (e) a named maintainer on this project owns tracking it; and
@@ -311,4 +311,4 @@ be performed before each release and the result recorded in the release notes.
 constitution lives in `CLAUDE.md` at the repository root and in the ADR set under `docs/adr/`. Where
 guidance and constitution disagree, the constitution governs and the guidance MUST be corrected.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-15 | **Last Amended**: 2026-09-16
+**Version**: 1.1.1 | **Ratified**: 2026-09-15 | **Last Amended**: 2026-09-16

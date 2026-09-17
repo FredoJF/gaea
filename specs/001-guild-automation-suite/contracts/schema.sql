@@ -1,4 +1,6 @@
 -- Contract: PostgreSQL schema for the Guild Automation Suite (spec 001).
+-- V1 scale: 25 guilds, 10 subscriptions of each kind per guild, 100 distinct upstream
+-- identities of each kind deployment-wide (FR-035a, FR-042a, FR-042b).
 -- Applied by the gaea-migrate binary using a privileged account separate from the
 -- account the services run as (ADR-0004, and the constitution's privilege-isolation rule).
 -- This file is the contract; the authoritative migrations live in crates/gaea-store/migrations/.
@@ -95,11 +97,48 @@ CREATE TABLE scheduled_message (
 -- FR-026 hold across restarts, redeployments and concurrent instances.
 CREATE INDEX schedule_due ON scheduled_message (next_occurrence) WHERE state = 'active';
 
+-- FR-035b / FR-042d: ONE upstream subscription per distinct identity across the whole
+-- deployment, fanned out to every guild following it. Twitch charges cost per subscription,
+-- so anything else spends the budget many times over for the same information.
+CREATE TYPE upstream_status AS ENUM ('pending', 'active', 'revoked', 'failed');
+
+CREATE TABLE twitch_upstream (
+    broadcaster_id    TEXT PRIMARY KEY,
+    eventsub_id       TEXT,
+    -- Platform requires ASCII, 10-100 chars. Generated from a CSPRNG (FR-035d).
+    hmac_secret       TEXT            NOT NULL,
+    status            upstream_status NOT NULL DEFAULT 'pending',
+    -- FR-035e: the revocation reason Twitch stated, kept so the dashboard can show an
+    -- operator WHY alerts stopped instead of leaving it buried in a log.
+    revocation_reason TEXT,
+    last_event_at     TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    CONSTRAINT secret_length CHECK (length(hmac_secret) BETWEEN 10 AND 100),
+    CONSTRAINT revoked_has_reason CHECK (status <> 'revoked' OR revocation_reason IS NOT NULL)
+);
+
+CREATE TABLE youtube_upstream (
+    youtube_channel_id TEXT PRIMARY KEY,
+    hmac_secret        TEXT            NOT NULL,
+    status             upstream_status NOT NULL DEFAULT 'pending',
+    -- FR-042c: renewal is scheduled from the lease_seconds the hub GRANTS, never from a
+    -- hardcoded interval. A lapse here announces nothing and stops the feed forever.
+    lease_expires_at   TIMESTAMPTZ,
+    last_renewal_error TEXT,
+    last_event_at      TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ     NOT NULL DEFAULT now()
+);
+
+-- Drives renewal ahead of expiry.
+CREATE INDEX youtube_renewal_due ON youtube_upstream (lease_expires_at)
+    WHERE status = 'active';
+-- FR-042b: the deployment ceiling counts rows in these two tables, not guild subscriptions.
+
 CREATE TABLE stream_subscription (
     id                           UUID PRIMARY KEY,
     guild_id                     BIGINT      NOT NULL REFERENCES guild(id) ON DELETE CASCADE,
     channel_id                   BIGINT      NOT NULL,
-    broadcaster_id               TEXT        NOT NULL,
+    broadcaster_id               TEXT        NOT NULL REFERENCES twitch_upstream(broadcaster_id),
     template                     TEXT        NOT NULL,
     last_announced_broadcast_id  TEXT,
     last_announced_at            TIMESTAMPTZ,
@@ -107,29 +146,26 @@ CREATE TABLE stream_subscription (
     UNIQUE (guild_id, broadcaster_id)
 );
 
--- FR-042b: the deployment ceiling counts DISTINCT upstream identities, because many
--- guilds following one streamer costs roughly what one guild costs.
+-- Fan-out lookup: one received event resolves to every guild following that broadcaster.
 CREATE INDEX stream_by_broadcaster ON stream_subscription (broadcaster_id);
 
 CREATE TABLE video_subscription (
     id                  UUID PRIMARY KEY,
     guild_id            BIGINT      NOT NULL REFERENCES guild(id) ON DELETE CASCADE,
     channel_id          BIGINT      NOT NULL,
-    youtube_channel_id  TEXT        NOT NULL,
+    youtube_channel_id  TEXT        NOT NULL REFERENCES youtube_upstream(youtube_channel_id),
     template            TEXT        NOT NULL,
     -- FR-039: nothing published before this instant is ever announced.
     subscribed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     exclude_livestreams BOOLEAN     NOT NULL DEFAULT true,
     exclude_shorts      BOOLEAN     NOT NULL DEFAULT true,
-    -- A lease that lapses without renewal is a silent permanent failure.
-    lease_expires_at    TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (guild_id, youtube_channel_id)
 );
 
-CREATE INDEX video_by_channel       ON video_subscription (youtube_channel_id);
-CREATE INDEX video_lease_renewal_due ON video_subscription (lease_expires_at)
-    WHERE lease_expires_at IS NOT NULL;
+-- Fan-out lookup. Lease state lives on youtube_upstream, not here: the lease is a
+-- property of the upstream subscription, shared by every guild following the channel.
+CREATE INDEX video_by_channel ON video_subscription (youtube_channel_id);
 
 -- FR-038: at most one alert per video, including after an edit or re-announce.
 -- A child table rather than an array, so this is a constraint rather than a search.

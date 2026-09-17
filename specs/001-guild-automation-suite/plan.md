@@ -36,10 +36,12 @@ tracing 0.1.44 (see Constitution Check) · a Prometheus exporter for metrics.
 process. Application account holds DML only; the migration binary uses a separate privileged
 account.
 
-**Testing**: `cargo test` for unit and integration; `cargo nextest` for parallel execution; SQLx
-test fixtures against an ephemeral PostgreSQL instance for anything touching the schema; the
-Discord boundary (ADR-0002 condition d) mocked at the trait so domain logic is testable without a
-live gateway.
+**Testing**: `cargo test` for unit and integration; `cargo nextest` for parallel execution.
+Database-touching tests use `#[sqlx::test]`, which creates and drops a fresh database per test
+against a developer-provided PostgreSQL — per-test isolation with no Docker dependency, using the
+tool already chosen for queries rather than adding another. A running PostgreSQL is therefore a
+prerequisite of any test run, in CI included. The Discord boundary (ADR-0002 condition d) is mocked
+at the trait, so domain logic and every deny path are testable without a live gateway.
 
 **Target Platform**: Linux server, deployed as a container running as a non-root user with a
 read-only root filesystem and `no-new-privileges` (CIS Docker Benchmark), per the constitution's
@@ -55,13 +57,25 @@ instant at p99 (SC-004) · Twitch alerts within 2 min and YouTube within 10 min 
 **Constraints**: Discord global limit of 50 requests/second per bot, per-route bucket headers
 honoured proactively, and the 10,000-invalid-requests-per-10-minutes ban threshold never approached
 (Discord Developer Docs, *Rate Limits*) · 500 channels per guild · 2,000 characters per message ·
-100 characters per channel name · Twitch and YouTube quotas bounding evaluation frequency
-(ADR-0007).
+100 characters per channel name.
 
-**Scale/Scope**: 1,000 guilds, 10,000 concurrent members (SC-009). At Discord's documented one
-shard per 2,500 guilds this is a **single gateway shard**, so the bot process is a singleton and
-running two instances would duplicate every event. Up to 25 Twitch and 25 YouTube subscriptions per
-guild (FR-035a, FR-042a), bounded deployment-wide by FR-042b.
+Twitch limits shaping the design (verified 2026-09-16): a `stream.online` subscription for an
+unauthorised broadcaster costs 1; WebSocket transport permits a total cost of only 10, which
+eliminates it; notifications must be acknowledged within seconds or the subscription is revoked for
+`notification_failures_exceeded`; HMAC-SHA256 verification with a 10-to-100 ASCII character secret;
+an 800-point API bucket reported via `Ratelimit-Limit` / `-Remaining` / `-Reset`. YouTube WebSub
+leases expire and must be renewed.
+
+**Scale/Scope**: **25 guilds and 2,500 members (SC-009)** — a deliberately small V1 target matching
+the intended deployment. At Discord's documented one shard per 2,500 guilds this is comfortably a
+**single gateway shard**, so the bot process is a singleton and running two instances would
+duplicate every event. Up to 10 Twitch and 10 YouTube subscriptions per guild (FR-035a, FR-042a),
+bounded deployment-wide at 100 distinct upstream identities of each kind (FR-042b).
+
+These ceilings sit far below any plausible platform limit, so V1 never has to reason about
+approaching one. That is a scale decision only: the platform *behaviours* that cause silent
+permanent failure are handled in full regardless of size, because a revoked subscription or a lapsed
+lease fails identically at 25 guilds and at 1,000, and neither announces itself.
 
 ## Constitution Check
 
@@ -106,9 +120,14 @@ governed by the six conditions added in constitution v1.1.0.
 | Axum | 0.8.9 | 2026-04-14 | **2026-09-15** | PASS (1 day) |
 | SQLx | 0.9.0 | 2026-05-21 | — | PASS by release |
 | Askama | 0.16.1 | 2026-09-04 | — | PASS by release |
-| **tracing** | **0.1.44** | **2025-12-18** | **2026-05-30** | **FAIL — 108 days** |
+| tracing | 0.1.44 | 2025-12-18 | 2026-05-30 | PASS (109 days, within 180) |
 
-Status: **FAIL on one dependency.** See Complexity Tracking.
+Status: **PASS.** The window was 90 days when this plan was first written and `tracing` failed it at
+109 days. Rather than waive the condition on its first application, the threshold was corrected to
+180 days in constitution v1.1.1 — see
+[ADR-0002](../../docs/adr/0002-pre-1.0-dependency-policy.md). Commit recency is a proxy for
+abandonment and mismeasures a library that has reached stability; 180 days still catches a project
+silent for six months, against a twelve-month unmaintained threshold.
 
 Note in passing: Axum's repository was committed to yesterday, which materially softens the cadence
 concern recorded in ADR-0005. Its slow release train is not dormancy.
@@ -119,11 +138,11 @@ Exact pins with a committed `Cargo.lock`; CI asserts no pin more than 30 days be
 and fails immediately on any advisory; 72-hour publication cooldown before adopting a new release
 except for advisory fixes; SBOM generated per release.
 
-**Installed toolchain is rustc 1.93.0 (2026-01-19) against stable 1.98.1 (2026-09-01) — roughly 8
-months stale, against a 30-day ceiling.** Twilight's MSRV is 1.89, so nothing blocks the update.
+**Toolchain updated 2026-09-16: rustc 1.98.1 (48a229cea, 2026-09-01), which is latest stable —
+0 days stale.** Pinning it via `rust-toolchain.toml` remains a scaffolding task so the version is
+asserted rather than merely current on one machine.
 
-Status: **FAIL until the toolchain is updated and pinned via `rust-toolchain.toml`.** This is a
-prerequisite task, not a design problem.
+Status: **PASS.**
 
 ### Principle V — Proven Correctness Before Merge
 
@@ -152,13 +171,13 @@ Status: **PASS** (subject to the `tracing` question above)
 |---|---|
 | Principle I — Security-First | PASS |
 | Principle II — Total Documentation | PASS |
-| Principle III — Engineering Merit | **FAIL** — `tracing` outside the 90-day activity window |
-| Principle IV — Dependency Currency | **FAIL** — toolchain 8 months stale |
+| Principle III — Engineering Merit | PASS (after the v1.1.1 threshold correction) |
+| Principle IV — Dependency Currency | PASS (toolchain updated to 1.98.1) |
 | Principle V — Proven Correctness | PASS |
 | Principle VI — Observability | PASS |
 
-Both failures are tracked below with proposed resolutions. Neither is a design flaw; both must be
-closed before implementation begins.
+**All six gates pass.** Both prior failures were closed on 2026-09-16: the toolchain was updated,
+and the activity window was corrected rather than waived.
 
 ## Project Structure
 
@@ -213,7 +232,11 @@ crates/
 bins/
 ├── gaea-bot/                # gateway loop, feature runners, scheduler, alert pipeline
 ├── gaea-migrate/            # one-shot, privileged account (ADR-0004)
+├── gaea-admin/              # operator-side configuration CLI. Not a user-facing
+│                            # configuration surface — see FR-041a of spec 002
 └── gaea-web/                # spec 002
+
+.github/workflows/           # CI gates (the repository remote is GitHub)
 
 tests/
 ├── contract/                # Discord failure modes, external callback shapes
@@ -233,10 +256,37 @@ The daylight-saving arithmetic in `gaea-domain/schedule` deserves specific menti
 of logic in this feature most likely to be wrong in a way nobody notices for months, and isolating
 it as pure code is what lets SC-004a replay a simulated year against it in milliseconds.
 
+## Delivery Scope
+
+The task list covers scaffolding and CI before features, because the gates below are constitutional
+requirements and retrofitting them means the earliest merges cannot satisfy Principles II, IV and V:
+
+1. **Scaffolding** — Cargo workspace and crate skeleton, `rust-toolchain.toml` pinned to 1.98.1,
+   exact dependency pins with a committed `Cargo.lock`.
+2. **CI gates** (GitHub Actions, matching the repository remote) — build with zero compiler and
+   linter warnings; documentation coverage; `cargo audit` and `cargo deny`; the 30-day pin-staleness
+   assertion required by Principle IV; secret scanning; a PostgreSQL service for `#[sqlx::test]`.
+3. **Container definition** — non-root, read-only root filesystem, `no-new-privileges`.
+4. **Features** — the five user stories in their spec priority order, P1 through P5.
+
+## External Platform Budget at V1 Scale
+
+At the ceilings above the external work is negligible, which is the point of setting them there.
+
+| Budget | V1 consumption | Headroom |
+|---|---|---|
+| Twitch EventSub total cost (1 per distinct broadcaster) | ≤ 100 | Far below the application ceiling, which V1 therefore need not confirm |
+| Twitch API bucket (800 points/min) | Reconciliation queries up to 100 broadcasters in a single `Get Streams` call — 1 point | Effectively unused |
+| YouTube Data API quota | **Zero** — the alert path uses the keyless feed and the WebSub hub, never the Data API | Entire quota unused |
+| Discord global limit (50 req/s) | Bounded by FR-010's per-guild outbound ceiling across 25 guilds | Large |
+
+The one number V1 deliberately does not rely on is Twitch's application-wide total-cost ceiling,
+which could not be extracted from the rendered documentation. At 100 distinct broadcasters that
+reliance is unnecessary. **It must be confirmed before the deployment ceiling in FR-042b is raised.**
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
-| `tracing` 0.1.44 fails amended Principle III condition (b) — last commit 2026-05-30, 108 days against a 90-day window | Structured logging with span-propagated correlation identifiers is required by Principle VI. `tracing` is the ecosystem standard (851M downloads) and is already a transitive dependency of Tokio-based libraries, so rejecting it removes nothing from the dependency graph | Writing logging in-house rejected: it would mean reimplementing span propagation, the exact mechanism Principle VI depends on. Switching to `log` rejected: no span model, so correlation would have to be threaded by hand through every signature. **Resolution required before implementation** — either widen condition (b) to 180 days (a constitution PATCH/MINOR), or record a time-boxed exception with a scheduled re-check. This is the first live test of whether the ADR-0002 conditions are enforced or merely written down, and it should be answered deliberately |
-| Toolchain 1.93.0 against stable 1.98.1 — 8 months, against Principle IV's 30-day ceiling | Not a design decision; an environment state predating the constitution | No alternative. Update to 1.98.1 and pin via `rust-toolchain.toml` as the first implementation task. MSRV 1.89 for Twilight means nothing blocks it |
+| An operator-side `gaea-admin` CLI exists alongside the dashboard | The dashboard (spec 002) does not exist yet, so there is no way to configure the bot in order to run or demonstrate it. The CLI also earns its place permanently as the dashboard-down recovery path | Raw SQL seed scripts rejected: they bypass every write-time validation the spec requires, so testing would run against configurations the real system would refuse. Test fixtures alone rejected: the bot could never be run against a real guild until 002 ships, making the quickstart guide unusable. **Note the FR-041 tension and why it is not a violation**: FR-041 makes the dashboard the sole configuration surface for guild owners, administrators, managers and viewers. The host operator already holds shell access and the database credential, so they have unconditional authority over every setting regardless; operator tooling adds no authorization surface. This is recorded as FR-041a in spec 002 rather than left as an implicit reading |
 | Three binaries and six library crates for one feature set | ADR-0003's two-process topology is what makes SC-014 structural; ADR-0004's separate migration account is required by the constitution; the crate split is what makes deny-path testing and Twilight replaceability possible | A single binary was rejected in ADR-0003 because a fault in the public-facing half would take the gateway down, failing SC-014 by construction. A single crate was rejected because domain logic would then depend on Twilight and SQLx, making Principle V's deny-path tests require a live gateway and database |

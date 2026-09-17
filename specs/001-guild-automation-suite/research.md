@@ -61,13 +61,41 @@ Events*, retrieved 2026-09-16). `stream.online` on an arbitrary broadcaster requ
 authorization and therefore costs 1.
 
 **Decision**: WebSocket transport is eliminated. It would cap the entire deployment at roughly ten
-streamers against a target of 1,000 guilds × 25 subscriptions. Webhook transport, per
+streamers — below what a single active guild would want, so small V1 scale does not rescue it.
+Webhook transport, per
 [ADR-0007](../../docs/adr/0007-external-alert-transports.md).
 
-**Open**: the exact webhook total-cost ceiling with an app access token could not be extracted from
-the rendered documentation and **must be confirmed before implementation**. It is a direct input to
-FR-042b's deployment-wide subscription ceiling. Until confirmed, FR-042b's threshold is a
-configurable value with no defensible default.
+**Cost model confirmed** (Twitch Developer Docs, *Managing Subscriptions*, retrieved 2026-09-16):
+a subscription for a broadcaster who has **not** authorised the application costs 1. The
+documentation's own worked example states that `stream.online` plus `channel.update` for such a user
+costs 2. WebSocket limits are stated as applying per user token, which is what makes the total cost
+of 10 fatal for following arbitrary broadcasters.
+
+**Resolution for V1**: the application-wide webhook total-cost ceiling still could not be extracted
+from the rendered documentation, and **V1 is designed not to depend on it**. FR-042b caps the
+deployment at 100 distinct broadcasters — one subscription each, total cost 100 — which sits far
+below any plausible ceiling. Confirming the exact figure becomes necessary only when that cap is
+raised, and the plan records it as the precondition for doing so.
+
+### Twitch behaviours that must be handled regardless of scale
+
+These are correctness concerns, not capacity concerns. Each produces a silent permanent failure if
+ignored, and each fails identically at 25 guilds and at 1,000.
+
+| Behaviour | Documented detail | Requirement |
+|---|---|---|
+| Acknowledgement deadline | A handler that responds too slowly too often has its subscription revoked with `notification_failures_exceeded`. The documentation's own advice is to store the notification and process it after responding 2XX | FR-035c |
+| Revocation | Reasons include `notification_failures_exceeded`, `user_removed`, `version_removed`, `authorization_revoked`, `moderator_removed` — each needing distinct handling | FR-035e |
+| Message verification | HMAC-SHA256 over message id, timestamp and raw body, signature in `Twitch-Eventsub-Message-Signature`; the secret must be ASCII, 10–100 characters | FR-035d |
+| API rate limiting | 800-point bucket reported via `Ratelimit-Limit`, `Ratelimit-Remaining`, `Ratelimit-Reset`; on 429, wait for the reset instant | FR-035f |
+
+**Decision**: the acknowledgement deadline is the sharpest of these. A handler that announces before
+acknowledging will, under load or during a Discord slowdown, accumulate delivery failures and be
+unsubscribed from *every* streamer at once — a total, silent loss of the feature caused by success
+elsewhere. The callback therefore persists and acknowledges; the announcement is separate work.
+
+**Alternatives considered**: announcing inline and relying on the handler being fast — rejected,
+because its failure mode is catastrophic and correlated rather than gradual.
 
 ### YouTube transport
 
@@ -81,7 +109,26 @@ applies and no API key is needed for the alert path.
 **Open**: the WebSub lease duration granted by the hub must be measured at implementation time, as
 it sets the renewal schedule. A lease that lapses without renewal produces a silent permanent
 failure — a channel whose uploads are simply never announced — which is the specific failure the
-reconciliation sweep exists to catch.
+reconciliation sweep exists to catch (FR-042c).
+
+This is measured rather than assumed because the hub chooses the lease it grants; the application
+must read `lease_seconds` from the confirmation and schedule renewal from that, never from a
+hardcoded interval. The feed also carries only a limited number of recent entries, which is why
+FR-039's cutoff is evaluated against publication time rather than feed position.
+
+### V1 scale decision
+
+**Decision**: V1 targets 25 guilds, with 10 subscriptions of each kind per guild and 100 distinct
+upstream identities of each kind deployment-wide.
+
+**Rationale**: the deployment is intentionally small. Setting ceilings far below every platform
+limit means V1 never reasons about approaching one, and the external budget consumption becomes
+negligible — the YouTube Data API is not used at all, and a full Twitch reconciliation is a single
+API call costing one point out of 800 per minute.
+
+**What this does not relax**: the platform behaviours above. Scale ceilings are a V1 convenience;
+revocation handling, the acknowledgement deadline, signature verification and lease renewal are not,
+because none of them is a function of size.
 
 ## Unknowns resolved for this plan
 
@@ -114,7 +161,7 @@ amplifying a user's own authority.
 **Decision**: a single gateway shard; the bot process is a singleton.
 
 **Rationale**: Discord requires one shard per 2,500 guilds (Discord Developer Docs, *Gateway →
-Sharding*); the SC-009 target is 1,000 guilds.
+Sharding*); the SC-009 target for this version is 25 guilds, well inside a single shard.
 
 **Consequence**: running two bot instances would duplicate every event — every greeting posted
 twice. This must be prevented operationally and guarded in code by an advisory lock taken at

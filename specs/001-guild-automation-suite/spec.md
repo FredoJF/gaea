@@ -17,6 +17,7 @@
 - Q: How many Twitch streamers and YouTube channels should a single Discord server be allowed to subscribe to? → A: 25 of each per guild by default, operator-configurable. The ceiling exists because total subscriptions across all guilds divided by the platforms' request budgets is what determines achievable alert latency.
 - Q: When the bot is removed from a server, how long should that server's settings be kept before they are permanently deleted? → A: A 30-day grace period, then permanent deletion. Re-adding the bot within 30 days restores the configuration intact; after 30 days it is irrecoverable.
 - Q: Should welcome messages be plain text, or should operators be able to build a richer card? → A: Plain text, plus an optional fixed-layout card carrying a colour and the joining member's avatar. Operator-supplied image URLs are excluded, so the bot never fetches remote content chosen by a guild.
+- Q: How should the Twitch API's documented limits be handled, given V1's deployment size? → A: V1 targets a small deployment (25 guilds), so scale ceilings are set conservatively rather than engineered for growth. The Twitch behaviours that are correctness rather than scale concerns — subscription revocation, the webhook acknowledgement deadline, HMAC verification, and Helix rate-limit headers — are handled in full regardless of size, because each produces a silent permanent failure if ignored.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -251,6 +252,14 @@ and confirm exactly one alert is posted.
   answer within the latency targets.
 - A single upstream identity — one streamer, one YouTube channel — is subscribed by a large number
   of guilds at once.
+- Twitch revokes a subscription because delivery failed too often, because the broadcaster ceased to
+  exist, or because the subscription version is no longer supported.
+- A Twitch notification arrives while the announcement path is slow, risking the acknowledgement
+  deadline and, if repeated, revocation of every subscription.
+- A forged or replayed callback arrives at either platform endpoint.
+- An upstream subscription already exists when the application tries to create it again after a
+  restart.
+- A YouTube WebSub lease lapses because renewal failed while the process was down.
 - A malicious operator schedules messages at a frequency intended to consume the bot's outbound
   budget at the expense of other guilds.
 
@@ -414,10 +423,31 @@ and confirm exactly one alert is posted.
 - **FR-034**: System MUST include the stream title, category, and a link to the broadcast in the
   alert.
 - **FR-035**: Operators MUST be able to list and remove Twitch subscriptions.
-- **FR-035a**: System MUST enforce a ceiling on Twitch subscriptions per guild, defaulting to 25,
-  and MUST refuse a subscription beyond it with an explanatory message naming the limit. The ceiling
-  MUST be operator-configurable so a deployment serving few guilds can raise it and one serving many
-  can lower it without a code change.
+- **FR-035a**: System MUST enforce a ceiling on Twitch subscriptions per guild, defaulting to 10 for
+  this version, and MUST refuse a subscription beyond it with an explanatory message naming the
+  limit. The ceiling MUST be operator-configurable.
+- **FR-035b**: System MUST create at most one upstream Twitch subscription per distinct broadcaster
+  across the whole deployment, fanning a single received event out to every guild subscribed to that
+  broadcaster. Twitch's cost is charged per subscription, not per guild, so anything else spends the
+  budget many times over for the same information.
+- **FR-035c**: System MUST acknowledge a Twitch notification within the platform's response deadline
+  and perform the announcement work afterwards. Twitch revokes a subscription whose delivery failure
+  rate is too high (`notification_failures_exceeded`), so a handler that does its work before
+  acknowledging will eventually unsubscribe itself from every streamer at once.
+- **FR-035d**: System MUST verify the HMAC-SHA256 signature on every Twitch message, in constant
+  time, before parsing the body or taking any action, and MUST reject a message whose timestamp
+  falls outside a narrow replay window. The per-subscription secret MUST be generated from a CSPRNG
+  and MUST satisfy the platform's 10-to-100 ASCII character requirement.
+- **FR-035e**: System MUST treat a Twitch `revocation` message as an operator-visible fault, marking
+  the affected subscriptions broken and recording the stated reason. It MUST NOT be discarded. The
+  documented reasons each need distinct handling: `notification_failures_exceeded` indicates a
+  defect in this application; `user_removed` means the broadcaster no longer exists and the guild's
+  subscription should be retired; `version_removed` means the platform has moved on and the
+  application must be updated.
+- **FR-035f**: System MUST honour the Twitch API's rate-limit headers when validating streamers and
+  when reconciling, and MUST wait for the reset instant given on a 429 rather than retrying blindly.
+- **FR-035g**: System MUST treat a duplicate upstream subscription request as success rather than as
+  an error, so that a restart or a retry cannot leave a guild silently unsubscribed.
 
 **YouTube upload alerts**
 
@@ -433,12 +463,20 @@ and confirm exactly one alert is posted.
 - **FR-041**: System MUST validate a YouTube channel's existence at subscription time and reject
   unknown channels without storing them.
 - **FR-042**: Operators MUST be able to list and remove YouTube subscriptions.
-- **FR-042a**: System MUST enforce a ceiling on YouTube subscriptions per guild, defaulting to 25,
-  on the same terms as FR-035a.
-- **FR-042b**: System MUST NOT accept a new subscription of either kind when doing so would push the
-  deployment's total subscription count past what its configured external-service budgets can
-  evaluate within the latency targets in SC-005. The refusal MUST name the deployment ceiling as the
-  cause rather than appearing to be a fault in the guild's own configuration.
+- **FR-042a**: System MUST enforce a ceiling on YouTube subscriptions per guild, defaulting to 10 for
+  this version, on the same terms as FR-035a.
+- **FR-042b**: System MUST enforce a deployment-wide ceiling on the number of **distinct** upstream
+  identities followed — defaulting to 100 Twitch broadcasters and 100 YouTube channels for this
+  version — and MUST refuse a new subscription that would exceed it, naming the deployment ceiling
+  as the cause rather than appearing to be a fault in the guild's own configuration. Distinct
+  identities are the unit because FR-035b means many guilds following one streamer cost what one
+  guild costs.
+- **FR-042c**: System MUST renew each YouTube WebSub lease ahead of its expiry and MUST record a
+  failed renewal as an operator-visible fault. A lapsed lease produces no error of its own: that
+  channel's uploads are simply never announced again, indefinitely, with nothing indicating why.
+- **FR-042d**: System MUST create at most one upstream WebSub subscription per distinct YouTube
+  channel across the deployment, fanning a received notification out to every guild subscribed to
+  it, for the same reason as FR-035b.
 - **FR-043**: System MUST NOT emit a backlog burst of alerts after an outage; alerts for events
   older than a documented staleness threshold MUST be dropped and recorded.
 
@@ -493,9 +531,12 @@ and confirm exactly one alert is posted.
 - **SC-005**: 95% of Twitch alerts appear within 2 minutes of the broadcast starting, and 95% of
   YouTube alerts within 10 minutes of publication, measured with every guild at its default
   subscription ceiling.
-- **SC-005a**: The stated alert latencies hold at 1,000 guilds each holding 25 Twitch and 25 YouTube
-  subscriptions, without exceeding either external service's request budget, verified by load
-  modelling before implementation and by measurement after.
+- **SC-005a**: The stated alert latencies hold at this version's target of 25 guilds holding at most
+  100 distinct Twitch broadcasters and 100 distinct YouTube channels between them, without
+  exceeding either external service's request budget.
+- **SC-005b**: A Twitch subscription revocation, a lapsed YouTube lease, and a broadcaster who
+  ceases to exist each surface as an operator-visible fault naming the cause, verified by inducing
+  all three. None may fail silently.
 - **SC-006**: Zero duplicate announcements across a measurement period spanning at least one full
   restart and one deployment — every broadcast, video, scheduled instant, and join produces exactly
   one message.
@@ -504,8 +545,10 @@ and confirm exactly one alert is posted.
   authorized to send.
 - **SC-008**: No temporary voice channel persists more than 5 minutes after its last occupant leaves,
   including across a bot restart, verified over a 7-day soak.
-- **SC-009**: The bot sustains 1,000 guilds and 10,000 concurrent members without any per-guild
-  latency target above degrading beyond its stated threshold.
+- **SC-009**: The bot sustains this version's target of 25 guilds and 2,500 members without any
+  per-guild latency target above degrading beyond its stated threshold. This is a deliberately small
+  V1 target matching the intended deployment; the design does not foreclose growth, but no claim is
+  made or tested beyond it.
 - **SC-010**: A single guild's misconfiguration, abuse, or external-service failure never degrades
   service for another guild, verified by fault injection.
 - **SC-011**: Outages of either external content service are survived without crash, without false
@@ -549,15 +592,21 @@ and confirm exactly one alert is posted.
   member reconnecting after a brief drop does not lose their channel.
 - Alert messages are customisable per subscription, following the expectation set by comparable
   products; a sensible default template ships so that configuration is a single step.
-- Each guild may subscribe to up to 25 Twitch streamers and 25 YouTube channels by default, and the
-  ceiling is operator-configurable. This covers a community following its own streamers and a few
-  affiliates, which is what the feature is for. The number is not arbitrary: total subscriptions
-  across all guilds, divided by what each external platform will answer per unit time, is what
-  determines achievable alert latency, so an unbounded ceiling would turn the 2-minute Twitch target
-  into an unenforceable aspiration for every guild at once.
-- Many guilds subscribing to the same upstream identity are expected to cost roughly what one guild
-  costs, so the binding constraint is the number of distinct streamers and channels followed across
-  the deployment rather than the number of subscriptions.
+- **This version targets a small deployment — roughly 25 guilds.** Ceilings are therefore set
+  conservatively rather than engineered for growth: 10 Twitch and 10 YouTube subscriptions per
+  guild, and 100 distinct upstream identities of each kind across the deployment. These numbers are
+  chosen to sit far below any plausible platform ceiling so that V1 never has to reason about
+  approaching one. Raising them later requires confirming the Twitch application-wide total-cost
+  ceiling, which is deliberately not relied upon at these levels.
+- Many guilds subscribing to the same upstream identity cost what one guild costs, because one
+  upstream subscription is created per distinct identity and fanned out (FR-035b, FR-042d). The
+  binding constraint is therefore the number of distinct streamers and channels followed across the
+  deployment, not the number of guild subscriptions.
+- Scale limits and platform *behaviours* are treated differently. Ceilings are relaxed for a small
+  V1; the behaviours that cause silent permanent failure — subscription revocation, the webhook
+  acknowledgement deadline, signature verification, lease renewal — are handled in full regardless
+  of deployment size, because each fails the same way at 25 guilds as at 1,000 and none of them
+  announces itself.
 - Timezone rules come from the IANA Time Zone Database rather than being hardcoded, so that a
   jurisdiction changing its daylight-saving policy is handled by updating that data rather than by
   changing the bot. Rules are resolved at the moment an occurrence is computed, not when the
@@ -589,6 +638,15 @@ and confirm exactly one alert is posted.
   subscriptions can be evaluated; the stated alert latency targets assume operation within those
   quotas at the subscription ceilings above. The deployment MUST refuse new subscriptions rather
   than silently degrade every guild's latency once that budget is reached (FR-042b).
+- Twitch's documented limits that shape this feature (verified 2026-09-16): a `stream.online`
+  subscription for a broadcaster who has not authorised the application costs 1; the WebSocket
+  transport permits a total cost of only 10, which is why webhook transport is used; notifications
+  must be acknowledged within seconds or the subscription is revoked for excessive delivery
+  failures; and the API enforces an 800-point bucket reported through `Ratelimit-Limit`,
+  `Ratelimit-Remaining` and `Ratelimit-Reset` headers.
+- YouTube's WebSub leases expire and must be renewed, and the channel feed carries only a limited
+  number of recent entries — which is why FR-039's subscription-start cutoff is evaluated against
+  publication time rather than against feed position.
 - Platform limits assumed and designed against: 500 channels per guild, 2,000 characters per
   message, 100 characters per channel name. Card presentations carry their own, different limits,
   which FR-012d requires be validated separately rather than assumed equal to the message limit.

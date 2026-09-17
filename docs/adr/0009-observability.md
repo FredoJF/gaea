@@ -47,8 +47,9 @@ detectable if consumption is measured continuously.
 
 `tracing` and `metrics` are pre-1.0. (1) No `>= 1.0` alternative of comparable merit exists;
 `tracing` is the ecosystem standard at 851M downloads and is already a transitive dependency of
-Tokio-based libraries. (2) tracing released 2025-12-18 — **outside the 90-day window**, so
-repository activity must be confirmed and recorded before adoption, and re-checked in CI.
+Tokio-based libraries. (2) tracing's last commit is 2026-05-30 — 109 days, which **failed the original 90-day window and
+passes the 180-day window** adopted in constitution v1.1.1. That failure is what prompted the
+amendment; see [ADR-0002](0002-pre-1.0-dependency-policy.md). Re-checked in CI.
 (3) MIT permits forking. (4) Instrumentation is confined to a project-owned facade so the backend can
 be replaced. (5) Owner: project maintainer. (6) Cadence recorded above.
 
@@ -63,6 +64,7 @@ be replaced. (5) Owner: project maintainer. (6) Cadence recorded above.
   not merely a running process.
 - The audit record required by Principle VI lives in the database, not in the log stream, because
   FR-027 (002) requires it to be immutable and queryable by the dashboard.
-- `tracing`'s release date falls outside the amended activity window. This must be checked, not
-  assumed, before it is adopted — and it is the first live test of whether the ADR-0002 conditions
-  are actually enforced or merely written down.
+- `tracing` was the first live test of whether the ADR-0002 conditions are enforced or merely
+  written down. They were enforced: the check failed, and the response was to fix the threshold
+  deliberately rather than to wave the dependency through. The condition still binds — it is now
+  calibrated to catch abandonment rather than stability.

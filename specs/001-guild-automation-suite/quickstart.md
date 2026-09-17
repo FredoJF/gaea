@@ -8,17 +8,15 @@ Implementation detail belongs in `tasks.md`; schema detail is in
 
 ## Prerequisites
 
-**Blocking, from the plan's Constitution Check — neither is optional:**
+All Constitution Check gates pass as of 2026-09-16. Both prior blockers are closed: the toolchain is
+at 1.98.1 (latest stable), and the `tracing` activity window was corrected to 180 days in
+constitution v1.1.1.
 
-1. Rust toolchain updated to 1.98.1 and pinned via `rust-toolchain.toml`. The environment currently
-   has 1.93.0, roughly eight months behind, against Principle IV's 30-day ceiling.
-2. The `tracing` condition (b) question resolved — widen the 90-day activity window, or record a
-   time-boxed exception. See the plan's Complexity Tracking.
-
-**Also required:**
-
+- Rust 1.98.1, pinned by `rust-toolchain.toml`.
 - PostgreSQL 18.x reachable, with two roles: a privileged role for migrations and a DML-only role
-  for the services (ADR-0004, and the constitution's privilege-isolation rule).
+  for the services (ADR-0004, and the constitution's privilege-isolation rule). A running instance
+  is required for any test run, because `#[sqlx::test]` creates a fresh database per test against it
+  (ADR-0010).
 - A Discord application with a bot user. **The Members privileged intent must be enabled in the
   Developer Portal** — greetings cannot function without it, and nothing else in this feature needs
   a privileged intent.
@@ -41,7 +39,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps        # fails on any undocumented public item
 cargo audit && cargo deny check
 
-# 4. Start the bot with the DML-only role.
+# 4. Configure a test guild (operator-side; the dashboard does not exist yet).
+cargo run --bin gaea-admin -- --config ./config/dev.toml guild set-timezone <guild-id> Europe/Paris
+
+# 5. Start the bot with the DML-only role.
 cargo run --bin gaea-bot -- --config ./config/dev.toml
 ```
 
@@ -51,8 +52,10 @@ deliberately by removing a secret file; a silent default here would be a Princip
 
 ## Validating each user story
 
-Configuration is performed in the dashboard (spec 002). Until it exists, insert rows directly and
-note in the task list that each scenario must be re-run through the dashboard once available.
+Configuration is performed in the dashboard (spec 002) by guild owners, administrators and
+managers. Until the dashboard exists, the operator configures through `gaea-admin` on the host
+(ADR-0010) — which applies the same validation, so a configuration accepted here is one the
+dashboard would also accept. Each scenario should be re-run through the dashboard once available.
 
 ### US1 — Greetings (P1)
 
@@ -114,6 +117,16 @@ note in the task list that each scenario must be re-run through the dashboard on
 4. Replay the same EventSub notification. **Expect** it acknowledged and discarded.
 5. Block outbound access to Twitch for an hour, then restore. **Expect** no crash, no false alerts,
    and no backlog burst (SC-011, FR-043).
+6. Subscribe two different guilds to the same streamer. **Expect** exactly one upstream EventSub
+   subscription, and both guilds alerted from the single received event (FR-035b).
+7. **Induce a revocation.** Make the callback fail repeatedly until Twitch revokes with
+   `notification_failures_exceeded`, or delete the subscription upstream. **Expect** the upstream
+   marked revoked with the stated reason, and an operator-visible fault — not a silent stop
+   (FR-035e, SC-005b). This is the most likely way this feature dies quietly in production.
+8. Restart the bot with upstream subscriptions already present. **Expect** recreation treated as
+   success, and no guild left silently unsubscribed (FR-035g).
+9. Send a callback with a forged signature, and a valid one with an old timestamp. **Expect** both
+   rejected before any parsing or action (FR-035d).
 
 ### US5 — YouTube alerts (P5)
 
@@ -125,7 +138,11 @@ note in the task list that each scenario must be re-run through the dashboard on
 4. Publish a livestream and a short with both filters on. **Expect** no alerts (FR-040).
 5. **Expire a WebSub lease deliberately** by suppressing renewal. **Expect** the reconciliation sweep
    to catch the gap and the failed renewal to appear as an operator-visible fault — not a log line
-   nobody reads. This is the silent-failure mode the sweep exists for.
+   nobody reads (FR-042c, SC-005b). This is the silent-failure mode the sweep exists for.
+6. Confirm the renewal schedule is derived from the `lease_seconds` the hub returned, not from a
+   constant. Subscribe and inspect the stored expiry against the confirmation (FR-042c).
+7. Subscribe two guilds to the same YouTube channel. **Expect** one upstream subscription and both
+   guilds alerted (FR-042d).
 
 ## Cross-cutting checks
 
@@ -142,8 +159,15 @@ note in the task list that each scenario must be re-run through the dashboard on
 
 ## Load validation
 
-SC-005a requires the alert latencies to hold at 1,000 guilds each holding 25 Twitch and 25 YouTube
-subscriptions. Model this before implementation rather than discovering it after: the binding
-constraint is the count of **distinct** upstream identities, not subscriptions, and the Twitch
-webhook total-cost ceiling is still unconfirmed (see [research.md](research.md)). FR-042b's
-deployment ceiling cannot be given a defensible value until it is.
+SC-005a's target for this version is 25 guilds holding at most 100 distinct Twitch broadcasters and
+100 distinct YouTube channels between them. At that size the external budgets are effectively
+unused: a full Twitch reconciliation is a single `Get Streams` call costing one point of an
+800-point minute bucket, and the YouTube Data API is not touched at all.
+
+No load modelling is required for V1 — the ceilings were chosen precisely so that none is. What
+**is** required before those ceilings are raised is confirming Twitch's application-wide total-cost
+ceiling, which V1 deliberately does not depend on. See [research.md](research.md).
+
+The behavioural tests above are a different matter and are not optional at any scale. A revoked
+subscription and a lapsed lease fail identically with 25 guilds and with 1,000, and neither
+announces itself.

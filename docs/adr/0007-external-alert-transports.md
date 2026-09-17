@@ -5,8 +5,9 @@
 ## Context
 
 SC-005 (001) requires 95% of Twitch alerts within 2 minutes of a broadcast starting and 95% of
-YouTube alerts within 10 minutes of publication. SC-005a requires those to hold at 1,000 guilds each
-holding 25 Twitch and 25 YouTube subscriptions. FR-032 and FR-038 require at most one alert per
+YouTube alerts within 10 minutes of publication. SC-005a requires those to hold at this version's target of 25 guilds each
+holding 10 Twitch and 10 YouTube subscriptions, bounded deployment-wide at 100 distinct upstream
+identities of each kind. FR-032 and FR-038 require at most one alert per
 broadcast and per video. FR-043 forbids a backlog burst after an outage.
 
 This is the one decision that determines whether those targets are reachable at all.
@@ -20,8 +21,19 @@ This is the one decision that determines whether those targets are reachable at 
   **ten streamers**. This is decisive and rules WebSocket out.
 - **Twitch EventSub over webhook**: a substantially higher total-cost ceiling with an app access
   token, requiring a public HTTPS callback — which this deployment has, since the dashboard is
-  already public (FR-040, 002). The exact ceiling must be re-confirmed against the current
-  *Subscription limits* documentation before implementation.
+  already public (FR-040, 002). The exact application-wide ceiling could not be extracted from the
+  rendered documentation; **V1 is designed not to depend on it** (see *V1 scale* below).
+- **Cost model** (confirmed 2026-09-16): a subscription for a broadcaster who has not authorised the
+  application costs 1. One upstream subscription is created per distinct broadcaster and fanned out
+  to every guild following them, so cost scales with distinct identities, not with guild
+  subscriptions.
+- **Acknowledgement deadline**: notifications must be acknowledged within seconds; a handler that is
+  too slow too often has its subscription revoked with `notification_failures_exceeded`.
+- **Revocation**: Twitch withdraws subscriptions on its own initiative, stating a reason —
+  `notification_failures_exceeded`, `user_removed`, `version_removed`, `authorization_revoked`,
+  `moderator_removed`.
+- **API bucket**: 800 points per minute, reported via `Ratelimit-Limit`, `Ratelimit-Remaining` and
+  `Ratelimit-Reset`.
 - **YouTube**: the channel feed at `youtube.com/feeds/videos.xml?channel_id=` responds without an
   API key (verified, HTTP 200), and the WebSub hub at `pubsubhubbub.appspot.com` is reachable
   (verified, HTTP 200). The YouTube Data API v3 default quota is **10,000 units per day** across all
@@ -39,7 +51,7 @@ This is the one decision that determines whether those targets are reachable at 
 ## Rationale
 
 Push is the only transport that meets the latency targets within the platforms' budgets. Polling
-1,000 guilds' worth of subscriptions frequently enough for a 2-minute target would breach Twitch's
+every subscription frequently enough for a 2-minute target would breach Twitch's
 rate limits and YouTube's daily quota by a wide margin.
 
 The reconciliation sweep exists because push alone is not trustworthy. WebSub leases expire and must
@@ -64,6 +76,32 @@ sweep paths converging on the same event.
 - **Push Twitch, poll YouTube RSS** — avoids WebSub lease renewal. Rejected: RSS polling cost grows
   linearly with distinct channels followed, and the 10-minute target degrades as the deployment
   grows, which is exactly the scaling property FR-042b (001) exists to prevent.
+
+## V1 scale (amended 2026-09-16)
+
+V1 targets roughly 25 guilds. Ceilings are therefore set far below every platform limit — 10
+subscriptions of each kind per guild, 100 distinct upstream identities of each kind across the
+deployment — so that V1 never has to reason about approaching one.
+
+| Budget | V1 consumption |
+|---|---|
+| Twitch EventSub total cost | ≤ 100, one per distinct broadcaster |
+| Twitch API bucket (800/min) | A full reconciliation is one `Get Streams` call — 1 point |
+| YouTube Data API quota | Zero; the alert path uses only the keyless feed and the WebSub hub |
+
+Confirming Twitch's application-wide total-cost ceiling becomes a prerequisite only when the
+deployment ceiling is raised.
+
+**What small scale does not relax.** The distinction matters and is easy to get wrong: capacity
+limits are relaxed for V1, platform *behaviours* are not. Revocation handling, the acknowledgement
+deadline, signature verification, and lease renewal each produce a silent permanent failure when
+ignored, and each fails identically at 25 guilds and at 1,000. Deferring them would not be
+proportionate simplification; it would be shipping a feature that stops working without saying so.
+
+The acknowledgement deadline deserves particular emphasis. A handler that announces to Discord
+before acknowledging Twitch is coupled to Discord's latency, so a Discord slowdown accumulates
+delivery failures and Twitch unsubscribes the application from *every* streamer at once. The
+callback therefore persists and acknowledges; announcing is separate work.
 
 ## Consequences
 

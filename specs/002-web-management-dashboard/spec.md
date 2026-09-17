@@ -303,6 +303,12 @@ entirely from the dashboard and reach a working greeting.
 - **FR-010**: System MUST make a refusal to access a server the user has no authority over
   indistinguishable from that server not existing, so that the interface does not disclose which
   servers exist.
+- **FR-041a**: FR-041's "sole configuration surface" governs the surfaces guild owners,
+  administrators, managers and viewers reach — Discord and the web. It does not govern the host
+  operator, who holds shell access and the database credential and therefore already has
+  unconditional authority over every setting. Operator-side tooling is not a second user-facing
+  configuration path and creates no additional authorization surface to keep correct.
+
 - **FR-011**: Only owners and administrators MUST be able to designate or withdraw manager and
   viewer roles; designated managers and viewers MUST NOT be able to alter the set of designated
   roles or otherwise widen their own access.
@@ -377,6 +383,30 @@ entirely from the dashboard and reach a working greeting.
   which any client can attempt authentication, and MUST record when a limit is reached.
 - **FR-030**: System MUST remain available to other servers when any one server's configuration,
   authority lookup, or external dependency fails.
+
+**Licence compliance**
+
+- **FR-055**: System MUST offer every remote user interacting with the dashboard an opportunity to
+  receive its Corresponding Source, through a prominent, discoverable link available without signing
+  in. Gaea is licensed AGPL-3.0, whose §13 makes this an obligation of operating the software over a
+  network, not an optional courtesy. An operator running a modified build MUST be able to point that
+  link at their own source without modifying the application.
+- **FR-056**: System MUST state the running version and, where the build provides it, the source
+  revision, so that the source a user is offered is identifiable as the source actually running.
+
+**External platform callbacks**
+
+- **FR-052**: System MUST expose the Twitch and YouTube callback endpoints defined in
+  [001](../001-guild-automation-suite/spec.md), verify each platform's signature before parsing the
+  body or taking any action, and rate-limit them independently of dashboard traffic so that callback
+  volume cannot degrade the dashboard or the reverse.
+- **FR-053**: System MUST acknowledge a platform callback within that platform's deadline and hand
+  the work off for separate processing. It MUST NOT perform announcement work before acknowledging:
+  Twitch revokes subscriptions whose delivery failure rate is too high, so a handler coupled to
+  Discord's latency can cause the application to be unsubscribed from every streamer at once.
+- **FR-054**: System MUST surface upstream subscription faults — a Twitch revocation, a lapsed
+  YouTube lease, a failed renewal — on the affected feature's page with the platform's stated
+  reason, so that alerts silently stopping is a visible fault rather than a mystery.
 
 **Public exposure**
 
@@ -489,8 +519,10 @@ entirely from the dashboard and reach a working greeting.
 - **SC-007**: 95% of page views render usable content within 2 seconds on a typical residential
   connection.
 - **SC-008**: 99% of saved changes are reflected in the bot's behavior within 30 seconds.
-- **SC-009**: The dashboard remains responsive with 100 concurrent authorized users and for an
-  account holding authority over 200 servers.
+- **SC-009**: The dashboard remains responsive with 20 concurrent authorized users and for an
+  account holding authority over 50 servers — this version's target, matching the small deployment
+  described in [001](../001-guild-automation-suite/spec.md). The design does not foreclose growth,
+  but no claim is made or tested beyond it.
 - **SC-010**: Every management task is completable by keyboard alone and on a 375-pixel-wide screen,
   verified by walkthrough of each task.
 - **SC-011**: Zero unintended mass notifications originate from a dashboard action, verified by
@@ -522,6 +554,12 @@ entirely from the dashboard and reach a working greeting.
   that exceeds the retention age.
 - **SC-023**: Removing the bot from a server leaves no trace of that server's activity record within
   the documented deletion window, verified by inspection after removal.
+- **SC-024**: A remote user who has not signed in can reach an offer of the Corresponding Source and
+  identify the running version from the dashboard alone, verified by walkthrough — the obligation
+  AGPL-3.0 §13 places on operating this software over a network.
+- **SC-025**: An upstream alert subscription fault — a Twitch revocation or a lapsed YouTube lease —
+  is visible on the affected feature's page with its stated cause within one reconciliation
+  interval, verified by inducing both.
 
 ## Assumptions
 
@@ -531,6 +569,10 @@ entirely from the dashboard and reach a working greeting.
   [001-guild-automation-suite](../001-guild-automation-suite/spec.md). It introduces no bot feature
   of its own; its value is entirely in managing, observing, and delegating.
 - "Almost every feature" is bounded by FR-015. Everything else is in scope.
+- Gaea is licensed AGPL-3.0. Because the dashboard is a network-facing interface to the program,
+  §13 obliges it to offer its Corresponding Source to remote users. This is a functional requirement
+  of the product (FR-055, FR-056), not a packaging detail, and it is why an unauthenticated,
+  discoverable route exists at all on a dashboard that otherwise reveals nothing before sign-in.
 - The dashboard serves guild management only. It is not a public marketing site, a billing system, a
   premium-tier gate, or a support portal — all of which comparable products bundle and all of which
   are out of scope.

@@ -49,9 +49,10 @@ section of [spec.md](../spec.md) for the question-and-answer record.
    instant (FR-023b), an ambiguous one fires on its first occurrence (FR-023c). SC-004a tests this
    by replaying a simulated year, because these are the two days a year a scheduling bug silently
    drops or doubles a message.
-3. Subscription ceilings → 25 Twitch and 25 YouTube per guild, operator-configurable (FR-035a,
-   FR-042a). FR-042b refuses new subscriptions once deployment-wide load would breach the SC-005
-   latency targets, naming the deployment as the cause, rather than letting every guild's alerts
+3. Subscription ceilings → 10 Twitch and 10 YouTube per guild, operator-configurable (FR-035a,
+   FR-042a), bounded deployment-wide at 100 distinct upstream identities of each kind (FR-042b).
+   Revised downward on 2026-09-16 to match this version's 25-guild target; FR-042b still refuses
+   new subscriptions naming the deployment as the cause, rather than letting every guild's alerts
    silently slow down.
 4. Data lifecycle after removal → 30-day dormancy, then irrecoverable deletion (FR-009 through
    FR-009c). FR-009a requires dormant data to do nothing at all, which prevents a stored

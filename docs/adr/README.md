@@ -15,12 +15,13 @@ measured or cited evidence, decision, and consequences.
 | [0007](0007-external-alert-transports.md) | Twitch and YouTube Alert Transports | Accepted |
 | [0008](0008-secrets-and-configuration.md) | Secret Injection and Configuration Loading | Accepted |
 | [0009](0009-observability.md) | Observability — Logging, Tracing, and Metrics | Accepted |
+| [0010](0010-development-and-delivery-toolchain.md) | Development and Delivery Toolchain | Accepted |
 
 ## Selected stack
 
 | Layer | Selection | Version verified 2026-09-16 |
 |---|---|---|
-| Language / toolchain | Rust | 1.98.1 — **installed 1.93.0, must be updated** |
+| Language / toolchain | Rust | 1.98.1 (installed and current) |
 | Async runtime | Tokio | 1.53.1 |
 | Discord client | Twilight (modular crates) | 0.17.1 |
 | Serialization | Serde | 1.0.229 |
@@ -34,16 +35,32 @@ measured or cited evidence, decision, and consequences.
 Every version above is a point-in-time observation. Principle IV requires CI to assert currency
 continuously — no pin more than 30 days behind latest stable, no advisory in the graph.
 
+## Project licence
+
+Gaea is **AGPL-3.0**. All dependencies are permissive (MIT, Apache-2.0, ISC, PostgreSQL License) and
+compatible with incorporation into an AGPL-3.0 work. §13 obliges the network-facing dashboard to
+offer its Corresponding Source to remote users — a functional requirement, recorded as FR-055 and
+FR-056 in [spec 002](../../specs/002-web-management-dashboard/spec.md).
+
+## Closed action items
+
+1. ~~Update the Rust toolchain.~~ **Closed 2026-09-16** — updated to 1.98.1, which is latest stable.
+   Pinning via `rust-toolchain.toml` is a scaffolding task so the version is asserted, not merely
+   current on one machine.
+2. ~~Confirm `tracing` repository activity.~~ **Closed 2026-09-16** — last commit 2026-05-30, 109
+   days. This failed the original 90-day window, and the response was to correct the threshold to
+   180 days (constitution v1.1.1) rather than waive the condition. See
+   [ADR-0002](0002-pre-1.0-dependency-policy.md).
+3. ~~Confirm the Twitch EventSub webhook cost ceiling.~~ **Closed 2026-09-16** — V1's ceilings were
+   lowered so the figure is no longer depended upon. Confirming it is now a precondition for
+   *raising* the deployment ceiling, not for shipping. See
+   [ADR-0007](0007-external-alert-transports.md).
+4. ~~Record the internal Discord boundary.~~ **Closed** — specified in
+   [contracts/discord-boundary.md](../../specs/001-guild-automation-suite/contracts/discord-boundary.md).
+
 ## Open action items
 
-1. **Update the Rust toolchain.** Installed 1.93.0 (2026-01-19) against stable 1.98.1 (2026-09-01) —
-   roughly 8 months stale, against Principle IV's 30-day ceiling. Pin via `rust-toolchain.toml`
-   before implementation begins. Twilight's MSRV is 1.89, so nothing blocks the update.
-2. **Confirm `tracing` repository activity.** Its last release (2025-12-18) falls outside the 90-day
-   activity window that amended Principle III condition (b) requires. Confirm and record before
-   adoption — see [ADR-0009](0009-observability.md).
-3. **Confirm the Twitch EventSub webhook cost ceiling** and the WebSub lease duration against
-   current documentation. Both are inputs to FR-042b's deployment-wide subscription ceiling — see
+1. **Measure the YouTube WebSub lease duration** at implementation time. The hub chooses the lease
+   it grants, so renewal must be scheduled from the `lease_seconds` in the confirmation and never
+   from a constant. A lapsed lease announces nothing — see
    [ADR-0007](0007-external-alert-transports.md).
-4. **Record the internal Discord boundary** required by amended Principle III condition (d) as part
-   of the implementation plan, not as an afterthought.

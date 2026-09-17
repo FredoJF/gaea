@@ -18,8 +18,8 @@ governs the versions pinned here.
 
 ## Context
 
-Gaea is a security-first, self-hosted Discord bot serving up to 1,000 guilds
-(SC-009, 001) with a publicly reachable web management dashboard (002). The workload has two
+Gaea is a security-first, self-hosted Discord bot. Its first version targets a small deployment of
+roughly 25 guilds (SC-009, 001) with a publicly reachable web management dashboard (002). The workload has two
 distinct shapes:
 
 1. **High-fanout event processing** — a persistent gateway connection delivering member joins, voice
@@ -120,7 +120,7 @@ popularity:
    crate you choose to include. Principle I's data-minimization constraint and the Security and
    Platform Constraints section ("collect and retain only the data required by an enabled feature")
    are far easier to satisfy when caching is something you add deliberately rather than something
-   you must disable. It also directly bounds memory growth at 1,000 guilds.
+   you must disable. It also bounds memory growth directly as the guild count rises.
 2. **Transitive dependency count.** Principle III requires every direct dependency to justify its
    transitive cost. Pulling `twilight-gateway`, `twilight-http` and `twilight-model` without
    `twilight-cache-inmemory` or `twilight-util` yields a materially smaller graph than a monolithic
@@ -130,7 +130,7 @@ popularity:
    temporary-voice owner controls. A command framework would be near-pure overhead.
 
 **Sharding.** Discord requires one gateway shard per 2,500 guilds (Discord Developer Docs,
-*Gateway → Sharding*). At the SC-009 target of 1,000 guilds, Gaea needs a single shard, so
+*Gateway → Sharding*). At this version's target of 25 guilds, Gaea needs a single shard, so
 Twilight's multi-shard support is headroom rather than a present requirement.
 
 ### Serialization
@@ -188,7 +188,7 @@ keys and row-level policy, not by application discipline.
 | Requirement | Status |
 |---|---|
 | Principle II — doc coverage enforced at build | `#![deny(missing_docs)]` fails the build on an undocumented public item, exactly as the principle requires |
-| Principle III — license compatibility | MIT / Apache-2.0 / ISC / PostgreSQL License; all permissive and mutually compatible |
+| Principle III — license compatibility | Gaea itself is **AGPL-3.0**. Dependencies are MIT / Apache-2.0 / ISC / PostgreSQL License — all permissive and all compatible with incorporation into an AGPL-3.0 work (Apache-2.0 is one-way compatible with GPLv3/AGPLv3). Note that AGPL-3.0 §13 obliges the network-facing dashboard to offer its Corresponding Source to remote users; see FR-055 of spec 002 |
 | Principle III — ≥1.0 stable line | Rust ✅ · Tokio 1.53.1 ✅ · Serde 1.0.229 ✅ · PostgreSQL 18.6 ✅ |
 | Principle IV — lockfile and integrity | `Cargo.lock` records exact versions and registry checksums; committed |
 | Principle IV — SBOM | `cargo sbom` / `cargo cyclonedx` produce SPDX or CycloneDX output |

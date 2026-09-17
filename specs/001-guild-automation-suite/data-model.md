@@ -144,9 +144,21 @@ Shared fields: `id` UUID PK · `guild_id` FK · `channel_id` (Discord destinatio
 Announced video identifiers live in a child table rather than an array, so FR-038's "at most one
 alert per video, including after edits" is a uniqueness constraint rather than a search.
 
-**Ceilings**: FR-035a and FR-042a are per-guild counts enforced at write time. FR-042b's
-deployment-wide ceiling is enforced against the count of *distinct* upstream identities, because
-many guilds following one streamer costs approximately what one guild costs.
+**Ceilings**: FR-035a and FR-042a are per-guild counts enforced at write time, defaulting to 10 each
+for V1. FR-042b's deployment-wide ceiling — 100 distinct identities of each kind for V1 — is
+enforced against the count of *distinct* upstream identities, because one upstream subscription
+serves every guild following that identity.
+
+**Upstream subscription state is distinct from guild subscription.** A separate row per distinct
+broadcaster and per distinct YouTube channel records the upstream subscription: its platform-side
+identifier, its per-subscription HMAC secret (Twitch), its lease expiry (YouTube), its current
+status, and the revocation reason when the platform has withdrawn it. Guild subscriptions reference
+it. Without this separation, FR-035b and FR-042d's one-subscription-per-identity rule has nowhere to
+live, and a revocation affecting many guilds would have to be recorded many times.
+
+**Revocation and lease state are operator-visible by construction** (FR-035e, FR-042c): status and
+reason are columns, so a broken upstream subscription is a queryable fact the dashboard can surface,
+not an entry buried in a log.
 
 ### delivery_record
 

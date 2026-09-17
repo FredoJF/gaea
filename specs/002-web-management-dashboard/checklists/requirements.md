@@ -82,6 +82,23 @@ See the `## Clarifications` section of [spec.md](../spec.md) for the question-an
   FR-001 removes password handling from the threat model, and FR-049/FR-051 bound how long the
   activity record lives.
 
+**Amendments 2026-09-16 (post-planning)**: three requirement groups were added and all 16 items were
+re-verified against them.
+
+- FR-041a records explicitly that FR-041's "sole configuration surface" governs guild-side users,
+  not the host operator, who already holds shell access and the database credential. This closes a
+  reading that would otherwise have made the `gaea-admin` operator CLI (ADR-0010) look like a
+  violation.
+- FR-052 through FR-054 place the Twitch and YouTube callback endpoints on the web process, with the
+  acknowledge-then-process discipline Twitch's revocation behaviour demands, and require upstream
+  subscription faults to be visible on the affected feature's page.
+- FR-055 and FR-056 carry the AGPL-3.0 §13 obligation: a network-facing interface to the program
+  must offer its Corresponding Source to remote users. This is why an unauthenticated, discoverable
+  route exists on a dashboard that otherwise reveals nothing before sign-in, and it is verified by
+  SC-024.
+- SC-009 was scaled to this version's target of 20 concurrent users and 50 servers, matching the
+  small V1 deployment described in spec 001.
+
 **Cross-spec effect**: clarification resolved the configuration-surface decision in
 [001-guild-automation-suite](../../001-guild-automation-suite/spec.md) and recorded there that
 in-Discord commands are not a configuration surface. That spec retains 2 open markers of its own

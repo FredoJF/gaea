@@ -59,7 +59,8 @@ window in which the two surfaces disagree.
   required by [ADR-0008](0008-secrets-and-configuration.md).
 - Shared code (domain types, data access, the Discord boundary from ADR-0002) lives in library
   crates consumed by both binaries — a Cargo workspace.
-- At the SC-009 target of 1,000 guilds Discord requires a single gateway shard (Discord Developer
-  Docs, *Gateway → Sharding*: one shard per 2,500 guilds), so the bot process is a singleton. Running
+- At the SC-009 target for this version — 25 guilds — Discord requires a single gateway shard
+  (Discord Developer Docs, *Gateway → Sharding*: one shard per 2,500 guilds), so the bot process is
+  a singleton. Running
   two instances would duplicate every event; this must be prevented operationally and guarded in
   code.
